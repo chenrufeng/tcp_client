@@ -16,7 +16,7 @@ int _tmain(int argc, _TCHAR* argv[]){
     time_t timeBegin;
     timeBegin = time(NULL);
     if (tc.Connect()){
-        char Pack[TcpClient::MAX_BUFF_SIZE::MAX_SIZE];
+        char* Pack = new char[TcpClient::MAX_BUFF_SIZE::MAX_SIZE];
         int msgLen = 0;
         while (true){
             msgLen = tc.GetMsg(Pack, TcpClient::MAX_BUFF_SIZE::MAX_SIZE);
@@ -35,6 +35,7 @@ int _tmain(int argc, _TCHAR* argv[]){
                 elaspe = time(NULL) - timeBegin;
             }
         }
+        delete[] Pack;
     }
     return 0;
 }

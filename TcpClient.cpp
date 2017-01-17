@@ -7,12 +7,9 @@
 TcpClient::TcpClient()
 {
 }
-
-
 TcpClient::~TcpClient()
 {
 }
-
 void TcpClient::Init(const char* ip, int port)
 {
     //ÍøÂç³õÊ¼»¯  
@@ -63,7 +60,6 @@ bool TcpClient::IsConnected()
 {
     return this->m_connected;
 }
-
 size_t TcpClient::GetMsg(char* pBuf, size_t buff_size)
 {
     return m_recvbufHead.ReadMsg(pBuf, buff_size, &m_parser);
@@ -80,7 +76,6 @@ void TcpClient::CleanUp()
 {
     WSACleanup();
 }
-
 DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
     TcpClient* mine = (TcpClient*)lpParameter;
     FD_SET writeSet;
@@ -207,7 +202,6 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
     mine->m_connected = false;
     return 0;
 }
-
 volatile long TcpClient::Node::Count = 0;
 TcpClient::Node::Node(){
     ::InterlockedIncrement(&TcpClient::Node::Count);
@@ -268,7 +262,7 @@ TcpClient::SockBuff::~SockBuff(){
 bool TcpClient::SockBuff::Peek(char* pbuf, size_t size){
     bool ok = false;
     ::EnterCriticalSection(&this->m_cs);
-    if (this->GetUsed() > size){
+    if (this->GetUsed() >= size){
         if (pbuf && size > 0)
         {
             if (pHead->GetUsed() > size){
@@ -302,8 +296,11 @@ size_t TcpClient::SockBuff::ReadMsg(char* pBuf, size_t& size, TcpParser* parser)
         else
         {// no separator
             nRead = min(size, this->GetUsed() - parser->GetHeaderSize());
-            this->Read(parser->GetHeaderSize());
-            this->Read(pBuf, nRead);
+            if (nRead > 0)
+            {
+                this->Read(parser->GetHeaderSize());
+                this->Read(pBuf, nRead);
+            }
         }
     }
     ::LeaveCriticalSection(&this->m_cs);
@@ -394,6 +391,7 @@ void TcpClient::SockBuff::Read(char* pBuf, size_t size){
 void TcpClient::SockBuff::Write(size_t size){
     ::EnterCriticalSection(&this->m_cs);
     assert(!this->IsEmpty());
+    assert(size <= pAppending->Available());
     pAppending->Write(size);
     totalUsed += size;
     ::LeaveCriticalSection(&this->m_cs);
