@@ -8,6 +8,7 @@
 #include <fstream>
 #include <time.h>
 #include <stdio.h>
+#include "ShareLink.h"
 #pragma comment(lib,"ws2_32.lib")  
 using namespace std;
 int _tmain(int argc, _TCHAR* argv[]){
@@ -25,7 +26,8 @@ int _tmain(int argc, _TCHAR* argv[]){
         char* Pack = NULL;
         size_t msgLen = 0;
         while (true){
-            int nRnd = (rand() * rand()) % (TcpClient::MAX_BUFF_SIZE::MAX_SIZE) + 1;
+            //int nRnd = (rand() * rand()) % (MAX_BUFF_SIZE::MAX_SIZE) + 1;
+            int nRnd = (MAX_BUFF_SIZE::MAX_SIZE);
             Pack = new char[nRnd];
             int nlen = fread_s(Pack, nRnd, 1, nRnd, f);
             tc.Send(Pack, nlen);
@@ -64,11 +66,11 @@ int _tmain(int argc, _TCHAR* argv[]){
 //     long TT = 0;
 //     char* totalbuf = NULL;
 //     if (tc.Connect()){
-//         char* Pack = new char[TcpClient::MAX_BUFF_SIZE::MAX_SIZE];
+//         char* Pack = new char[MAX_BUFF_SIZE::MAX_SIZE];
 //         size_t msgLen = 0;
 //         while (true){
 //             msgLen = 0;
-//             msgLen = tc.GetMsg(Pack, TcpClient::MAX_BUFF_SIZE::MAX_SIZE);
+//             msgLen = tc.GetMsg(Pack, MAX_BUFF_SIZE::MAX_SIZE);
 //             total += msgLen;
 //             if (!tc.IsConnected()){
 //                 printf("connection is break.");
