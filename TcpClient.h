@@ -32,8 +32,8 @@ private:
 private:
     struct Node
     {
-        int   nStartIndex;
-        int   nUsed;
+        size_t   nStartIndex;
+        size_t   nUsed;
         char cData[MAX_SIZE];
         Node* pNext;
         static volatile long Count; //test code
@@ -56,35 +56,37 @@ private:
         size_t Available();
         size_t GetUsed();
     };
-    class SockBuff
+    class ShareLink
     {
         Node* pHead;
         Node* pAppending;  
         size_t totalUsed;
     public:
-        // Appending thread must be a single thread.
-        void GetAppendingPointer(char** ppBuf, size_t& size);
-        void Append(const char* pbuf, size_t size);
         // if it doesn't have enough size to peek, then return false.
         bool Peek(char* pbuf, size_t size);
         size_t ReadMsg(char* pBuf, size_t& size, TcpParser* parser);
         // decrease count.
         void Read(size_t size);
         void Read(char* pBuf, size_t size);
-        // increase count.
-        void Write(size_t size); 
+        
         size_t GetUsed();
         bool IsEmpty();
         // if it doesn't have used node, then return null.
         Node* PopHeadNode();
         void  PushFreeNode(Node* node); 
 
-        SockBuff();
-        ~SockBuff();
+        // Producers are responsible for allocation of pAppending.
+        void Append(const char* pbuf, size_t size);
+        // increase count.
+        void Write(size_t size);
+        // Appending thread must be a single thread.
+        void GetAppendingPointer(char** ppBuf, size_t& size);
+        ShareLink();
+        ~ShareLink();
         CRITICAL_SECTION m_cs;
     };
-    SockBuff m_sendbufHead;
-    SockBuff m_recvbufHead;
+    ShareLink m_sendbufHead;
+    ShareLink m_recvbufHead;
 
     volatile long m_stop; 
 };

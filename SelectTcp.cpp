@@ -5,37 +5,95 @@
 #include "Ws2tcpip.h"
 #include<WinSock2.h>  
 #include "TcpClient.h"
+#include <fstream>
 #include <time.h>
+#include <stdio.h>
 #pragma comment(lib,"ws2_32.lib")  
 using namespace std;
 int _tmain(int argc, _TCHAR* argv[]){
     TcpClient tc;
     tc.Init("127.0.0.1", 8888);
     size_t total = 0;
-    int elaspe = 0;
+    size_t elaspe = 0;
     time_t timeBegin;
     timeBegin = time(NULL);
+    FILE *f;
+    fopen_s(&f, "F:\\区域服务器.rar", "rb"); /*创建一个二进制文件只写*/
+    long TT = 0;
+    char* totalbuf = NULL;
     if (tc.Connect()){
-        char* Pack = new char[TcpClient::MAX_BUFF_SIZE::MAX_SIZE];
-        int msgLen = 0;
+        char* Pack = NULL;
+        size_t msgLen = 0;
         while (true){
-            msgLen = tc.GetMsg(Pack, TcpClient::MAX_BUFF_SIZE::MAX_SIZE);
-            total += msgLen;
-            if (!tc.IsConnected()){
-                printf("connection is break.");
+            int nRnd = (rand() * rand()) % (TcpClient::MAX_BUFF_SIZE::MAX_SIZE) + 1;
+            Pack = new char[nRnd];
+            int nlen = fread_s(Pack, nRnd, 1, nRnd, f);
+            tc.Send(Pack, nlen);
+            if (nlen <= 0)
+            {
+                printf("\n%d sent.\n", total);
+                Sleep(1000 * 1000 * 1000);
+                fclose(f); /*关闭文件*/
+                tc.Stop();
                 tc.Close();
                 tc.Connect();
-                total = 0;
+
             }
-            if (msgLen == 0){
-                Sleep(1);
-            }
-            if (time(NULL) - timeBegin > elaspe + 2){
-                printf("%d recieved.\n", total);
+            total += nlen;
+            
+            if (time(NULL) - timeBegin > (time_t)(elaspe + 2)){
+                printf("\n%d sent.\n", total);
                 elaspe = time(NULL) - timeBegin;
             }
+            //delete[] Pack;
         }
-        delete[] Pack;
+        
     }
     return 0;
 }
+
+// int _tmain(int argc, _TCHAR* argv[]){
+//     TcpClient tc;
+//     tc.Init("127.0.0.1", 8888);
+//     size_t total = 0;
+//     size_t elaspe = 0;
+//     time_t timeBegin;
+//     timeBegin = time(NULL);
+//     FILE *f;
+//     fopen_s(&f, "e:\\b.rar", "wb"); /*创建一个二进制文件只写*/
+//     long TT = 0;
+//     char* totalbuf = NULL;
+//     if (tc.Connect()){
+//         char* Pack = new char[TcpClient::MAX_BUFF_SIZE::MAX_SIZE];
+//         size_t msgLen = 0;
+//         while (true){
+//             msgLen = 0;
+//             msgLen = tc.GetMsg(Pack, TcpClient::MAX_BUFF_SIZE::MAX_SIZE);
+//             total += msgLen;
+//             if (!tc.IsConnected()){
+//                 printf("connection is break.");
+//                 tc.Close();
+//                 tc.Connect();
+//                 
+//                 
+//                 fclose(f); /*关闭文件*/
+//                 total = 0;
+//                 TT = 0;
+//             }
+//             if (msgLen == 0){
+//                 Sleep(1);
+//             }
+//             else
+//             {
+//                 fwrite(Pack, 1, msgLen, f);/*将6个浮点数写入文件中*/
+//                 
+//             }
+//             if (time(NULL) - timeBegin > (time_t)(elaspe + 2)){
+//                 printf("%d recieved.\n", total);
+//                 elaspe = time(NULL) - timeBegin;
+//             }
+//         }
+//         delete[] Pack;
+//     }
+//     return 0;
+// }

@@ -66,6 +66,8 @@ size_t TcpClient::GetMsg(char* pBuf, size_t buff_size)
 }
 void TcpClient::Send(void* pbuff, size_t size)
 {
+    if (size < 1) return;
+    assert(size <= MAX_BUFF_SIZE::MAX_SIZE);
     this->m_sendbufHead.Append((const char *)pbuff, size);
 }
 void TcpClient::Stop()
@@ -151,7 +153,7 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
                 //1.If listen has been called and a connection is pending, accept will succeed.
                 //2.Data is available for reading(includes OOB data if SO_OOBINLINE is enabled).
                 //3.Connection has been closed / reset / terminated.
-                int recvn = 0;
+                size_t recvn = 0;
                 recvn = recv(mine->m_sock, recving_pointer.GetPointer(), recving_pointer.GetSize(), 0);
                 //if the connection has been gracefully closed, the return value is zero.
                 if (recvn == 0) {
@@ -179,9 +181,9 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
                 //2.Data can be sent.
                 if (sending_buf && sending_buf->GetUsed() > 0)
                 {
-                    int bytes_sent = send(mine->m_sock, (const char*)sending_buf->GetData(), sending_buf->GetUsed(), 0);
+                    size_t bytes_sent = send(mine->m_sock, (const char*)sending_buf->GetData(), sending_buf->GetUsed(), 0);
                     if (bytes_sent == SOCKET_ERROR) {
-                        int ret_err = WSAGetLastError();
+                        size_t ret_err = WSAGetLastError();
                         if (WSAEWOULDBLOCK != ret_err)
                         {
                             printf("send failed: %d\n", ret_err);
@@ -233,7 +235,7 @@ bool TcpClient::Node::IsEmpty(){
     return (this->nUsed <= 0);
 }
 bool TcpClient::Node::IsFull(){
-    return TcpClient::MAX_BUFF_SIZE::MAX_SIZE == (nUsed + nStartIndex);
+    return Available() == 0;
 }
 char* TcpClient::Node::GetData(){
     return cData + nStartIndex;
@@ -244,13 +246,13 @@ size_t TcpClient::Node::Available(){
 size_t TcpClient::Node::GetUsed(){
     return this->nUsed;
 }
-TcpClient::SockBuff::SockBuff(){
+TcpClient::ShareLink::ShareLink(){
     pHead = NULL;
     pAppending = NULL;
     totalUsed = 0;
     ::InitializeCriticalSection(&this->m_cs);
 }
-TcpClient::SockBuff::~SockBuff(){
+TcpClient::ShareLink::~ShareLink(){
     while (pHead)
     {
         Node* t = pHead->pNext;
@@ -259,7 +261,7 @@ TcpClient::SockBuff::~SockBuff(){
     }
     ::DeleteCriticalSection(&this->m_cs);
 }
-bool TcpClient::SockBuff::Peek(char* pbuf, size_t size){
+bool TcpClient::ShareLink::Peek(char* pbuf, size_t size){
     bool ok = false;
     ::EnterCriticalSection(&this->m_cs);
     if (this->GetUsed() >= size){
@@ -279,7 +281,7 @@ bool TcpClient::SockBuff::Peek(char* pbuf, size_t size){
     ::LeaveCriticalSection(&this->m_cs);
     return ok;
 }
-size_t TcpClient::SockBuff::ReadMsg(char* pBuf, size_t& size, TcpParser* parser){
+size_t TcpClient::ShareLink::ReadMsg(char* pBuf, size_t& size, TcpParser* parser){
     int nRead = 0;
     ::EnterCriticalSection(&this->m_cs);
     if (this->Peek(parser->GetHeader(), parser->GetHeaderSize()))
@@ -306,65 +308,82 @@ size_t TcpClient::SockBuff::ReadMsg(char* pBuf, size_t& size, TcpParser* parser)
     ::LeaveCriticalSection(&this->m_cs);
     return nRead;
 }
-size_t TcpClient::SockBuff::GetUsed(){
+size_t TcpClient::ShareLink::GetUsed(){
     return totalUsed;
 }
-void TcpClient::SockBuff::Append(const char* pbuf, size_t size){
+void TcpClient::ShareLink::Append(const char* pbuf, size_t size){
     ::EnterCriticalSection(&this->m_cs);
     if (this->IsEmpty())
     {
         pHead = new Node();
         pAppending = pHead;
     }
-    if (pAppending->Available() >= size){
+    int ave = pAppending->Available();
+    if (ave > size){
         pAppending->Write(pbuf, size);
     }
     else{
-        int rest = size - pAppending->Available();
-        pAppending->Write(pbuf, size - rest);
-        pAppending->pNext = new Node();
-        pAppending->pNext = pAppending;
-        pAppending->Write(pbuf + size - rest, rest);
+        int rest = size - ave;
+        pAppending->Write(pbuf, ave);
+        if (rest > 0)
+        {
+            if (NULL == pAppending->pNext){
+                pAppending->pNext = new Node();
+            }
+            pAppending = pAppending->pNext;
+            pAppending->Write(pbuf + ave, rest);
+        }
+        else
+        {// rest == 0
+            if (NULL == pAppending->pNext){
+                pAppending->pNext = new Node();
+            }
+            pAppending = pAppending->pNext;
+        }
     }
     totalUsed += size;
     ::LeaveCriticalSection(&this->m_cs);
 }
-void TcpClient::SockBuff::GetAppendingPointer(char** ppBuf, size_t& size){
+void TcpClient::ShareLink::GetAppendingPointer(char** ppBuf, size_t& size){
     ::EnterCriticalSection(&this->m_cs);
     if (this->IsEmpty())
     {
         pHead = new Node();
         pAppending = pHead;
     }
-    if (pAppending->IsFull())
-    {
-        if (pAppending->pNext == NULL)
-        {
-            pAppending->pNext = new Node();
-        }
-        pAppending = pAppending->pNext;
-    }
+    assert(!pAppending->IsFull());
     *ppBuf = pAppending->cData + pAppending->nStartIndex;
     size = TcpClient::MAX_BUFF_SIZE::MAX_SIZE -(pAppending->nUsed + pAppending->nStartIndex);
     ::LeaveCriticalSection(&this->m_cs);
 }
-void TcpClient::SockBuff::Read(size_t size){
+void TcpClient::ShareLink::Read(size_t size){
     ::EnterCriticalSection(&this->m_cs);
-    assert(!this->IsEmpty());  
-    if (pHead->GetUsed() >= size){
+    assert(!this->IsEmpty());
+    if (pHead->GetUsed() > size){
         pHead->Read(size);
     }
     else{
         Node* t = pHead;
-        size = size - pHead->GetUsed();
-        pHead = pHead->pNext;
-        pHead->Read(size);
-        this->PushFreeNode(t);
+        size_t rest = size - pHead->GetUsed();
+        pHead->Read(pHead->GetUsed());
+        if (rest > 0){
+            pHead = pHead->pNext;
+            pHead->Read(rest);
+            this->PushFreeNode(t);
+        }
+        else
+        { //rest == 0
+            if (pHead->Available() == 0){// just enough
+                assert(pHead->pNext);
+                pHead = pHead->pNext;
+                this->PushFreeNode(t);
+            }
+        }
     }
     totalUsed -= size;
     ::LeaveCriticalSection(&this->m_cs);
 }
-void TcpClient::SockBuff::Read(char* pBuf, size_t size){
+void TcpClient::ShareLink::Read(char* pBuf, size_t size){
     ::EnterCriticalSection(&this->m_cs);
     assert(!this->IsEmpty());
     if (pHead->GetUsed() > size){
@@ -374,32 +393,54 @@ void TcpClient::SockBuff::Read(char* pBuf, size_t size){
         Node* t = pHead;        
         size_t rest = size - pHead->GetUsed();
         pHead->Read(pBuf, pHead->GetUsed());
-        
-        if (pHead->Available() <= 0)
-        {
+        if (rest > 0){
             pHead = pHead->pNext;
-            if (rest > 0)
-            {
-                pHead->Read(pBuf, rest);
-            }
+            pHead->Read(pBuf + size - rest, rest);
             this->PushFreeNode(t);
+        }
+        else
+        { //rest == 0
+            if (pHead->Available() == 0){// just enough
+                assert(pHead->pNext);
+                pHead = pHead->pNext;
+                this->PushFreeNode(t);
+            }
         }
     }
     totalUsed -= size;
     ::LeaveCriticalSection(&this->m_cs);
 }
-void TcpClient::SockBuff::Write(size_t size){
+void TcpClient::ShareLink::Write(size_t size){
     ::EnterCriticalSection(&this->m_cs);
-    assert(!this->IsEmpty());
-    assert(size <= pAppending->Available());
-    pAppending->Write(size);
+    assert(!this->IsEmpty());    
+    int ave = pAppending->Available();
+    if (ave > size){
+        pAppending->Write(size);
+    }
+    else{
+        int rest = size - ave;
+        pAppending->Write(ave);
+        if (rest > 0)
+        {
+            pAppending = pAppending->pNext;
+            assert(NULL != pAppending);
+            pAppending->Write(rest);
+        }
+        else
+        {// rest == 0
+            if (NULL == pAppending->pNext){
+                pAppending->pNext = new Node();
+            }
+            pAppending = pAppending->pNext;
+        }
+    }
     totalUsed += size;
     ::LeaveCriticalSection(&this->m_cs);
 }
-bool TcpClient::SockBuff::IsEmpty(){
+bool TcpClient::ShareLink::IsEmpty(){
     return pHead == NULL;
 }
-void TcpClient::SockBuff::PushFreeNode(Node* node){
+void TcpClient::ShareLink::PushFreeNode(Node* node){
     ::EnterCriticalSection(&this->m_cs);
     if (node){
         node->Reset();
@@ -416,7 +457,7 @@ void TcpClient::SockBuff::PushFreeNode(Node* node){
     }
     ::LeaveCriticalSection(&this->m_cs);
 }
-TcpClient::Node* TcpClient::SockBuff::PopHeadNode(){
+TcpClient::Node* TcpClient::ShareLink::PopHeadNode(){
     Node* t = NULL;
     ::EnterCriticalSection(&this->m_cs);
     if (!this->IsEmpty())
@@ -425,11 +466,13 @@ TcpClient::Node* TcpClient::SockBuff::PopHeadNode(){
         {
             t = pHead;
             totalUsed -= pHead->nUsed;
-            pHead = pHead->pNext;
-            if (pHead == NULL)
-            {// buff is empty.
-                pAppending = NULL;
+            if (pHead == pAppending){
+                if (NULL == pAppending->pNext){
+                    pAppending = new Node();
+                }
+                pAppending = pAppending->pNext;
             }
+            pHead = pHead->pNext;
         }
     }
     ::LeaveCriticalSection(&this->m_cs);
