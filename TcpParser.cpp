@@ -14,9 +14,15 @@ TcpParser::~TcpParser()
 size_t TcpParser::GetHeaderSize(){
     return 0;
 }
+
+char* TcpParser::GenerateHeaderByBody(const char* pBody, size_t size){
+    return NULL;
+}
+
 char* TcpParser::GetHeader(){
     return NULL;
 }
-int TcpParser::GetBodySize(){
-    return 0;
+
+size_t TcpParser::GetPackSize(){
+    return GetHeaderSize() + 0; // 0 represent body size.
 }

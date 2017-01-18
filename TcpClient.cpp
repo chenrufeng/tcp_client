@@ -24,6 +24,10 @@ void TcpClient::Init(const char* ip, int port)
 }
 bool TcpClient::Connect()
 {
+    m_sendbufHead.CleanUp();
+    m_recvbufHead.CleanUp();
+    m_sendbufHead.SetParser(&m_parser);
+    m_recvbufHead.SetParser(&m_parser);
     this->m_sock = socket(AF_INET, SOCK_STREAM, 0);
 
     SOCKADDR_IN addrSrv;
@@ -62,7 +66,7 @@ bool TcpClient::IsConnected()
 }
 size_t TcpClient::GetMsg(char* pBuf, size_t buff_size)
 {
-    return m_recvbufHead.ReadMsg(pBuf, buff_size, &m_parser);
+    return m_recvbufHead.ReadMsg(pBuf, buff_size);
 }
 void TcpClient::Send(void* pbuff, size_t size)
 {

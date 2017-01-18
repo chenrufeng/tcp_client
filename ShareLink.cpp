@@ -45,16 +45,26 @@ ShareLink::ShareLink(){
     pHead = NULL;
     pAppending = NULL;
     totalUsed = 0;
+    m_parser = NULL;
     ::InitializeCriticalSection(&this->m_cs);
 }
 ShareLink::~ShareLink(){
+
+    ::DeleteCriticalSection(&this->m_cs);
+}
+
+void ShareLink::CleanUp(){
     while (pHead)
     {
         Node* t = pHead->pNext;
         delete pHead;
         pHead = t;
     }
-    ::DeleteCriticalSection(&this->m_cs);
+    pHead = NULL;
+    pAppending = NULL;
+}
+void ShareLink::SetParser(TcpParser* parser){
+    m_parser = parser;
 }
 bool ShareLink::Peek(char* pbuf, size_t size){
     bool ok = false;
@@ -76,26 +86,24 @@ bool ShareLink::Peek(char* pbuf, size_t size){
     ::LeaveCriticalSection(&this->m_cs);
     return ok;
 }
-size_t ShareLink::ReadMsg(char* pBuf, size_t& size, TcpParser* parser){
+size_t ShareLink::ReadMsg(char* pBuf, size_t& size){
     size_t nRead = 0;
     ::EnterCriticalSection(&this->m_cs);
-    if (this->Peek(parser->GetHeader(), parser->GetHeaderSize()))
+    if (this->Peek(m_parser->GetHeader(), m_parser->GetHeaderSize()))
     {
-        if (parser->GetBodySize() > 0)
-        {
-            if (this->GetUsed() > parser->GetHeaderSize() + parser->GetBodySize())
-            {
-                nRead = parser->GetBodySize();
-                this->Read(parser->GetHeaderSize());
-                this->Read(pBuf, nRead);
+        if (this->GetUsed() >= m_parser->GetPackSize()){
+            if (0 == m_parser->GetPackSize())
+            {// no separator
+                nRead = min(size, this->GetUsed());
+                if (nRead > 0)
+                {
+                    this->Read(pBuf, nRead);
+                }
             }
-        }
-        else
-        {// no separator
-            nRead = min(size, this->GetUsed() - parser->GetHeaderSize());
-            if (nRead > 0)
+            else
             {
-                this->Read(parser->GetHeaderSize());
+                nRead = m_parser->GetPackSize() - m_parser->GetHeaderSize();
+                this->Read(m_parser->GetHeader(), m_parser->GetHeaderSize());
                 this->Read(pBuf, nRead);
             }
         }
@@ -108,13 +116,24 @@ size_t ShareLink::GetUsed(){
 }
 void ShareLink::Append(const char* pbuf, size_t size){
     ::EnterCriticalSection(&this->m_cs);
+    // adding header.
+    m_parser->GenerateHeaderByBody(pbuf, size);
+    size_t nHeader = m_parser->GetHeaderSize();
+    if (nHeader > 0){
+        this->Append_Imp(m_parser->GetHeader(), nHeader);
+    }
+    this->Append_Imp(pbuf, size);
+    ::LeaveCriticalSection(&this->m_cs);
+}
+void ShareLink::Append_Imp(const char* pbuf, size_t size){
+    ::EnterCriticalSection(&this->m_cs);
     if (this->IsEmpty())
     {
         pHead = new Node();
         pAppending = pHead;
     }
     size_t ave = pAppending->Available();
-    if (ave > size){
+    if (ave > size ){
         pAppending->Write(pbuf, size);
     }
     else{

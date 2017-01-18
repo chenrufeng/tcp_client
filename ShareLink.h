@@ -37,9 +37,10 @@ class ShareLink
     Node* pAppending;
     size_t totalUsed;
 public:
+    void SetParser(TcpParser* parser);
     // if it doesn't have enough size to peek, then return false.
     bool Peek(char* pbuf, size_t size);
-    size_t ReadMsg(char* pBuf, size_t& size, TcpParser* parser);
+    size_t ReadMsg(char* pBuf, size_t& size);
     // decrease count.
     void Read(size_t size);
     void Read(char* pBuf, size_t size);
@@ -50,13 +51,24 @@ public:
     Node* PopHeadNode();
     void  PushFreeNode(Node* node);
 
+    // USED BY SENDER FROM APPLICATION.
     // Producers are responsible for allocation of pAppending.
     void Append(const char* pbuf, size_t size);
+
+    // USED BY SOCKET WORKTHREADS.
     // increase count.
     void Write(size_t size);
     // Appending thread must be a single thread.
     void GetAppendingPointer(char** ppBuf, size_t& size);
+
+    void CleanUp();
     ShareLink();
     ~ShareLink();
+private:
+    // USED BY SENDER FROM APPLICATION.
+    // Producers are responsible for allocation of pAppending.
+    void Append_Imp(const char* pbuf, size_t size);
+
+    TcpParser* m_parser;
     CRITICAL_SECTION m_cs;
 };
