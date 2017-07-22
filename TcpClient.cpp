@@ -6,28 +6,47 @@
 
 TcpClient::TcpClient()
 {
+    ::InitializeCriticalSection(&SendCS);
 }
 TcpClient::~TcpClient()
 {
+    ::DeleteCriticalSection(&SendCS);
 }
-void TcpClient::Init(const char* ip, int port)
+void TcpClient::Init(const char* ip, int port, size_t max_pack_size, TcpParser* parser)
 {
     //ÍøÂç³õÊ¼»¯  
     WSADATA wsaData;
     WSAStartup(MAKEWORD(1, 1), &wsaData);
-    memcpy(this->m_ip, ip, sizeof(this->m_ip));
+    memcpy(this->m_ip, ip, strlen(ip) + 1);
+    Node::MaxSize = max_pack_size;
     this->m_port = port;
     this->m_connected = false;
     this->m_ThreadHandle = NULL;
     this->m_sock = INVALID_SOCKET;
     this->m_stop = 0;
+    m_max_pack_size = max_pack_size;
+
+    if (parser == NULL)
+    {
+        this->GetmsgParser = new TcpParser;
+        this->SendmsgParser = new TcpParser;
+    }
+    else{
+        this->GetmsgParser = parser->Clone();
+        this->SendmsgParser = parser->Clone();
+    }
 }
+bool TcpClient::Connect(const char* ip, int port)
+{
+    memcpy(this->m_ip, ip, strlen(ip) + 1);
+    this->m_port = port;
+    return this->Connect();
+}
+
 bool TcpClient::Connect()
 {
     m_sendbufHead.CleanUp();
     m_recvbufHead.CleanUp();
-    m_sendbufHead.SetParser(&m_parser);
-    m_recvbufHead.SetParser(&m_parser);
     this->m_sock = socket(AF_INET, SOCK_STREAM, 0);
 
     SOCKADDR_IN addrSrv;
@@ -59,6 +78,7 @@ void TcpClient::Close(){
         closesocket(this->m_sock);
         this->m_sock = INVALID_SOCKET;
     }
+    
 }
 bool TcpClient::IsConnected()
 {
@@ -66,20 +86,43 @@ bool TcpClient::IsConnected()
 }
 size_t TcpClient::GetMsg(char* pBuf, size_t buff_size)
 {
-    return m_recvbufHead.ReadMsg(pBuf, buff_size);
+    if (m_recvbufHead.Peek(GetmsgParser->GetHeader(), GetmsgParser->GetHeaderSize()))
+    {
+        if (m_recvbufHead.Peek(pBuf, GetmsgParser->GetPackSize()))
+        {
+            m_recvbufHead.Read(GetmsgParser->GetPackSize());
+            return GetmsgParser->GetPackSize();
+        }
+    }
+    return 0;
 }
 void TcpClient::Send(void* pbuff, size_t size)
 {
     if (size < 1) return;
-    assert(size <= MAX_BUFF_SIZE::MAX_SIZE);
-    this->m_sendbufHead.Append((const char *)pbuff, size);
+    assert(size <= m_max_pack_size);
+    ::EnterCriticalSection(&SendCS);
+    SendmsgParser->GenerateHeaderByBody((char*)pbuff, size);    
+    this->m_sendbufHead.Append_Imp(SendmsgParser->GetHeader(), SendmsgParser->GetHeaderSize());    
+    this->m_sendbufHead.Append_Imp((char*)pbuff, size);    
+    ::LeaveCriticalSection(&SendCS);
 }
 void TcpClient::Stop()
 {
     InterlockedIncrement(&this->m_stop);
+
 }
 void TcpClient::CleanUp()
 {
+    if (this->GetmsgParser){
+        delete this->GetmsgParser;
+        this->GetmsgParser = NULL;
+    }
+    if (this->SendmsgParser){
+        delete this->SendmsgParser;
+        this->SendmsgParser = NULL;
+    }
+    m_sendbufHead.CleanUp();
+    m_recvbufHead.CleanUp();
     WSACleanup();
 }
 DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
@@ -88,41 +131,12 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
     FD_SET readSet;
     timeval timeout = { 1, 0 };
     int total;
-    Node* sending_buf = NULL;
-    struct Recving_Pointer
-    {
-        size_t size;
-        size_t nUsed;
-        char* pointer;
-        Recving_Pointer(){
-            Reset();
-        }
-        void Reset(){
-            size = 0;
-            nUsed = 0;
-            pointer = NULL;
-        }
-        bool IsFull(){
-            return size <= 0;
-        }
-        void Received(size_t n){
-            nUsed += n;
-        }
-        char* GetPointer(){
-            return pointer;
-        }
-        size_t GetSize(){
-            return size;
-        }
-        size_t GetUsed(){
-            return nUsed;
-        }
-        void   FetchUsed(){
-            pointer += nUsed;
-            size -= nUsed;
-            nUsed = 0;            
-        }
-    }recving_pointer;
+    TcpParser* writeParser = mine->SendmsgParser->Clone();
+    TcpParser* readParser = mine->GetmsgParser->Clone();
+    Node* sending_buf = new Node;
+    Node* recving_buf = new Node;
+    char* pSendingPointer = NULL;
+    size_t  nSendingRemain = 0;
     while (mine->m_stop == 0)
     {
         FD_ZERO(&readSet);
@@ -130,14 +144,20 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
         FD_SET(mine->m_sock, &readSet);
         FD_SET(mine->m_sock, &writeSet);
 
-        if (sending_buf == NULL){
-            sending_buf = mine->m_sendbufHead.PopHeadNode();
-        }
-        if (recving_pointer.pointer == NULL){
-            mine->m_recvbufHead.GetAppendingPointer(&recving_pointer.pointer, recving_pointer.size);
+        if (nSendingRemain <= 0 && mine->m_sendbufHead.Peek(writeParser->GetHeader(), writeParser->GetHeaderSize()))
+        {
+            // should be ok
+            if (mine->m_sendbufHead.Peek(sending_buf->GetData(), writeParser->GetPackSize()))
+            {
+                writeParser->Encode(sending_buf->GetData() + writeParser->GetHeaderSize(), pSendingPointer, nSendingRemain);
+            }
+            else
+            {
+                break;
+            }
         }
         
-        if (sending_buf && sending_buf->GetUsed() > 0)
+        if (nSendingRemain > 0)
         {
             total = select(0, &readSet, &writeSet, nullptr, &timeout);
         }
@@ -157,25 +177,53 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
                 //1.If listen has been called and a connection is pending, accept will succeed.
                 //2.Data is available for reading(includes OOB data if SO_OOBINLINE is enabled).
                 //3.Connection has been closed / reset / terminated.
+                size_t req_recv_size = readParser->GetHeaderSize();
+                if (recving_buf->GetUsed() == req_recv_size)
+                {
+                    req_recv_size = readParser->GetBodySize();
+                }
+                else if (recving_buf->GetUsed() > req_recv_size)
+                {                    
+                    req_recv_size = readParser->GetPackSize() - recving_buf->GetUsed();
+                }
+                
+                if (req_recv_size > Node::MaxSize - recving_buf->GetUsed())
+                {
+                    //printf("recieved a bad header: %d\n", req_recv_size);
+                    break;
+                }
                 size_t recvn = 0;
-                recvn = recv(mine->m_sock, recving_pointer.GetPointer(), recving_pointer.GetSize(), 0);
+                recvn = recv(mine->m_sock, recving_buf->GetData(), req_recv_size, 0);
                 //if the connection has been gracefully closed, the return value is zero.
                 if (recvn == 0) {
-                    printf("recv failed: %d\n", WSAGetLastError());
+                    //printf("recv failed: %d\n", WSAGetLastError());
                     break;
                 }
                 if (recvn == SOCKET_ERROR) {
-                    printf("recv failed: %d\n", WSAGetLastError());
+                    //printf("recv failed: %d\n", WSAGetLastError());
                     break;
                 }
-                recving_pointer.Received(recvn);
-                mine->m_recvbufHead.Write(recving_pointer.GetUsed());
-                recving_pointer.FetchUsed();
-
-                if (recving_pointer.IsFull())
+                // 1.recv head and body of data
+                recving_buf->Write(recvn);             
+                if (recving_buf->GetUsed() > readParser->GetHeaderSize())
                 {
-                    recving_pointer.Reset();
+                    readParser->SetHeader(recving_buf->GetData());
+                    // 2.check whether have a full pack.
+                    if (readParser->GetPackSize() == recving_buf->GetUsed())
+                    {
+                        // 3.decode pack.
+                        char* pDecodedBuf = NULL;
+                        size_t decodeSize = 0;
+                        readParser->Decode(recving_buf->GetData(), pDecodedBuf, decodeSize);
+                        // 4.put pack into recieving queue.
+                        mine->m_recvbufHead.Append_Imp(pDecodedBuf, decodeSize);
+                        mine->DataArrial(decodeSize);
+                        // 5.reset
+                        recving_buf->Reset();
+                        readParser->Reset();
+                    }
                 }
+
             }
 #pragma endregion
 #pragma region socket send
@@ -183,28 +231,48 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
             {
                 //1.If processing a connect call(nonblocking), connection has succeeded.
                 //2.Data can be sent.
-                if (sending_buf && sending_buf->GetUsed() > 0)
+                if (nSendingRemain > 0)
                 {
-                    size_t bytes_sent = send(mine->m_sock, (const char*)sending_buf->GetData(), sending_buf->GetUsed(), 0);
+                    size_t bytes_sent = send(mine->m_sock, 
+                                            (const char*)pSendingPointer + (writeParser->GetPackSize() - nSendingRemain), 
+                                            nSendingRemain, 0);
                     if (bytes_sent == SOCKET_ERROR) {
                         size_t ret_err = WSAGetLastError();
                         if (WSAEWOULDBLOCK != ret_err)
                         {
-                            printf("send failed: %d\n", ret_err);
+                            //printf("send failed: %d\n", ret_err);
                             break;
                         }
                     }
-                    sending_buf->Read(bytes_sent);
-                    if (sending_buf->IsEmpty())
+                    nSendingRemain -= bytes_sent;
+                    if (nSendingRemain <= 0)
                     {
-                        mine->m_sendbufHead.PushFreeNode(sending_buf);
-                        sending_buf = NULL;
+                        writeParser->Reset();
                     }
                 }
             }
 #pragma endregion
         }
+    }    
+    if (recving_buf)
+    {
+        delete recving_buf;
+        recving_buf = NULL;
+    }
+    if (writeParser){
+        delete writeParser;
+        writeParser = NULL;
+    }
+    if (readParser){
+        delete readParser;
+        readParser = NULL;
     }
     mine->m_connected = false;
     return 0;
+}
+
+
+void TcpClient::DataArrial(int size)
+{
+
 }

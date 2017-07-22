@@ -2,10 +2,17 @@
 #include "ShareLink.h"
 #include "WinBase.h"
 #include "assert.h"
+
+size_t  Node::MaxSize = 0;
 Node::Node(){
+    cData = new char[MaxSize];
     Reset();
 }
 Node::~Node(){
+    if (cData){
+        delete[] cData;
+        cData = NULL;
+    }
 }
 void Node::Write(size_t size){
     nUsed += size;
@@ -36,7 +43,7 @@ char* Node::GetData(){
     return cData + nStartIndex;
 }
 size_t Node::Available(){
-    return MAX_SIZE - nStartIndex - nUsed;
+    return MaxSize - nStartIndex - nUsed;
 }
 size_t Node::GetUsed(){
     return this->nUsed;
@@ -45,7 +52,6 @@ ShareLink::ShareLink(){
     pHead = NULL;
     pAppending = NULL;
     totalUsed = 0;
-    m_parser = NULL;
     ::InitializeCriticalSection(&this->m_cs);
 }
 ShareLink::~ShareLink(){
@@ -63,9 +69,7 @@ void ShareLink::CleanUp(){
     pHead = NULL;
     pAppending = NULL;
 }
-void ShareLink::SetParser(TcpParser* parser){
-    m_parser = parser;
-}
+
 bool ShareLink::Peek(char* pbuf, size_t size){
     bool ok = false;
     ::EnterCriticalSection(&this->m_cs);
@@ -86,46 +90,14 @@ bool ShareLink::Peek(char* pbuf, size_t size){
     ::LeaveCriticalSection(&this->m_cs);
     return ok;
 }
-size_t ShareLink::ReadMsg(char* pBuf, size_t& size){
-    size_t nRead = 0;
-    ::EnterCriticalSection(&this->m_cs);
-    if (this->Peek(m_parser->GetHeader(), m_parser->GetHeaderSize()))
-    {
-        if (this->GetUsed() >= m_parser->GetPackSize()){
-            if (0 == m_parser->GetPackSize())
-            {// no separator
-                nRead = min(size, this->GetUsed());
-                if (nRead > 0)
-                {
-                    this->Read(pBuf, nRead);
-                }
-            }
-            else
-            {
-                nRead = m_parser->GetPackSize() - m_parser->GetHeaderSize();
-                this->Read(m_parser->GetHeader(), m_parser->GetHeaderSize());
-                this->Read(pBuf, nRead);
-            }
-        }
-    }
-    ::LeaveCriticalSection(&this->m_cs);
-    return nRead;
-}
+
 size_t ShareLink::GetUsed(){
     return totalUsed;
 }
-void ShareLink::Append(const char* pbuf, size_t size){
-    ::EnterCriticalSection(&this->m_cs);
-    // adding header.
-    m_parser->GenerateHeaderByBody(pbuf, size);
-    size_t nHeader = m_parser->GetHeaderSize();
-    if (nHeader > 0){
-        this->Append_Imp(m_parser->GetHeader(), nHeader);
-    }
-    this->Append_Imp(pbuf, size);
-    ::LeaveCriticalSection(&this->m_cs);
-}
+
+
 void ShareLink::Append_Imp(const char* pbuf, size_t size){
+    if (size <= 0) return;
     ::EnterCriticalSection(&this->m_cs);
     if (this->IsEmpty())
     {
@@ -158,18 +130,7 @@ void ShareLink::Append_Imp(const char* pbuf, size_t size){
     totalUsed += size;
     ::LeaveCriticalSection(&this->m_cs);
 }
-void ShareLink::GetAppendingPointer(char** ppBuf, size_t& size){
-    ::EnterCriticalSection(&this->m_cs);
-    if (this->IsEmpty())
-    {
-        pHead = new Node();
-        pAppending = pHead;
-    }
-    assert(!pAppending->IsFull());
-    *ppBuf = pAppending->cData + pAppending->nStartIndex;
-    size = MAX_BUFF_SIZE::MAX_SIZE - (pAppending->nUsed + pAppending->nStartIndex);
-    ::LeaveCriticalSection(&this->m_cs);
-}
+
 void ShareLink::Read(size_t size){
     ::EnterCriticalSection(&this->m_cs);
     assert(!this->IsEmpty());

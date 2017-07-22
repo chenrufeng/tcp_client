@@ -13,7 +13,8 @@
 using namespace std;
 int _tmain(int argc, _TCHAR* argv[]){
     TcpClient tc;
-    tc.Init("127.0.0.1", 8888);
+    int MAX_BUFF_SIZE = 10 * 1024;
+    tc.Init("127.0.0.1", 8888, MAX_BUFF_SIZE);
     size_t total = 0;
     size_t elaspe = 0;
     time_t timeBegin;
@@ -27,7 +28,7 @@ int _tmain(int argc, _TCHAR* argv[]){
         size_t msgLen = 0;
         while (true){
             //int nRnd = (rand() * rand()) % (MAX_BUFF_SIZE::MAX_SIZE) + 1;
-            int nRnd = (MAX_BUFF_SIZE::MAX_SIZE);
+            int nRnd = (MAX_BUFF_SIZE);
             Pack = new char[nRnd];
             int nlen = fread_s(Pack, nRnd, 1, nRnd, f);
             tc.Send(Pack, nlen);
