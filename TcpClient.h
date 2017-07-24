@@ -21,7 +21,7 @@ public:
     void Close();
     void CleanUp();
 protected:
-    virtual void DataArrial(int size);
+    virtual void DataArrialEvent(int size);
 private:
     static DWORD WINAPI ThreadFunc(LPVOID lpParameter);
     char m_ip[22];

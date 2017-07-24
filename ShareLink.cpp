@@ -18,7 +18,10 @@ void Node::Write(size_t size){
     nUsed += size;
 }
 void Node::Write(const char* buf, size_t size){
-    memcpy(cData + nStartIndex + nUsed, buf, size);
+    if (buf)
+    {
+        memcpy(cData + nStartIndex + nUsed, buf, size);
+    }
     nUsed += size;
 }
 void Node::Read(size_t size){
@@ -26,7 +29,10 @@ void Node::Read(size_t size){
     nStartIndex += size;
 }
 void Node::Read(char* pBuf, size_t size){
-    memcpy(pBuf, cData + nStartIndex, size);
+    if (pBuf)
+    {
+        memcpy(pBuf, cData + nStartIndex, size);
+    }
     nUsed -= size;
     nStartIndex += size;
 }
@@ -82,7 +88,10 @@ bool ShareLink::Peek(char* pbuf, size_t size){
             else{
                 size_t rest = size - pHead->GetUsed();
                 pHead->Peek(pbuf, pHead->GetUsed());
-                pHead->pNext->Peek(pbuf + pHead->GetUsed(), rest);
+                if (rest > 0)
+                {
+                    pHead->pNext->Peek(pbuf + pHead->GetUsed(), rest);
+                }
             }
         }
         ok = true;
@@ -94,11 +103,17 @@ bool ShareLink::Peek(char* pbuf, size_t size){
 size_t ShareLink::GetUsed(){
     return totalUsed;
 }
-
+void ShareLink::AppendPack(const char* pbuf, size_t size, const char* pbuf2, size_t size2){
+    if (size <= 0 && size2 <= 0) return;
+    ::EnterCriticalSection(&this->m_cs);
+    Append_Imp(pbuf, size);  // header
+    Append_Imp(pbuf2, size2);// body
+    ::LeaveCriticalSection(&this->m_cs);
+}
 
 void ShareLink::Append_Imp(const char* pbuf, size_t size){
     if (size <= 0) return;
-    ::EnterCriticalSection(&this->m_cs);
+    //::EnterCriticalSection(&this->m_cs);
     if (this->IsEmpty())
     {
         pHead = new Node();
@@ -128,7 +143,7 @@ void ShareLink::Append_Imp(const char* pbuf, size_t size){
         }
     }
     totalUsed += size;
-    ::LeaveCriticalSection(&this->m_cs);
+    //::LeaveCriticalSection(&this->m_cs);
 }
 
 void ShareLink::Read(size_t size){

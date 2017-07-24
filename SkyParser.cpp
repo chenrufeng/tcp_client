@@ -1,14 +1,18 @@
 #include "stdafx.h"
 #include "SkyParser.h"
-#include "windows.h"
+
+
+
 static const size_t DECODE_BUFLEN = 0x80000;
 
 
 SkyParser::SkyParser()
 {
     dwInSequence = 0;
-    
+    m_dwKey = 0;
     DecoderBuffer = new char[DECODE_BUFLEN];
+    m_dwOutSequence = 0;
+    m_bUseVerify = TRUE;
 }
 
 SkyParser::~SkyParser()
@@ -49,7 +53,13 @@ size_t SkyParser::GetBodySize()
     return bodySize;
 }
 
+void  SkyParser::SetBodySize(int n)
+{
+    Header.paclen = n;    
+}
+
 char* SkyParser::GenerateHeaderByBody(const char* pBody, size_t size){
+    Header.paclen = size;
     return 0;
 }
 
@@ -93,17 +103,102 @@ bool SkyParser::Decode(char* pack, char* &destbuff, size_t &destsize)
                 return false;
             }
         }
-        DNPHDR* pDHeader = ((DNPHDR*)(DecoderBuffer + size));
-        destbuff = (DecoderBuffer + size + sizeof(DNPHDR));
+        DNPHDR* pDHeader = ((DNPHDR*)(DecoderBuffer));
+        destbuff = (DecoderBuffer + sizeof(DNPHDR));
         destsize = pDHeader->paclen;
     }
 
     return true;
 }
 
-bool SkyParser::Encode(char* body, char* &destbuff, size_t &destsize)
+struct Encryptor
 {
-    destbuff = body;
-    destsize = GetPackSize();
+    Encryptor(iDirectNetCryption *encryptor) : encryptor(encryptor) {}
+    operator bool() { return encryptor != NULL; }
+    UINT32 crc32(void *data, DWORD size) { return encryptor->CRC32_compute(data, size); }
+    void encrypt(void *data, DWORD size) { encryptor->DES_encrypt(data, size); }
+    iDirectNetCryption *encryptor;
+};
+
+
+bool SkyParser::Encode(char* pvBuf, char* &destbuff, size_t &destsize)
+{
+    int data_size = Header.paclen;
+    char* raw_buffer = m_SendBuffer;
+    char* data = NULL; // 数据
+    if (m_bUseVerify)
+    {
+        size_t wSize = Header.paclen;
+        data = m_SendBuffer + 16;
+        LPDWORD pDword = (LPDWORD)data;
+
+        memcpy(data + 8, pvBuf, wSize);
+
+        // 4字节上对齐
+        if (wSize & 0x3)
+            wSize = (wSize & 0xfffc) + 4;
+
+        pDword[1] = m_dwKey = (m_dwKey == 0)
+            ? 897433309//(timeGetTime() ^ ((rand() << 20) | (rand() << 10) | rand()))
+            : (_get_dval(m_dwKey));
+
+        pDword[0] = cryption.CRC32_compute(data + 8, wSize) ^ m_dwKey;
+
+        LPDWORD pXorPtr = (LPDWORD)data + 2;
+        WORD count = (wSize >> 2);
+
+        DWORD dwAccKey = m_dwKey;
+
+        while (count > 0)
+        {
+            *pXorPtr ^= dwAccKey;
+            pXorPtr++;
+            count--;
+            dwAccKey += 0xcdcd;
+        }
+
+        cryption.DES_encrypt(data, 8);
+        data_size = Header.paclen + 8;
+        
+    }
+    else{
+        data = pvBuf;
+    }
+    //////////////////////////////////////////////////////////////////////////
+
+    //////////////////////////////////////////////////////////////////////////
+
+
+   
+    {
+        // 设定，一个打包数据的最大长度为 MAX_BUFFER_SIZE * 4
+        size_t new_size = (0 + data_size + sizeof(CRYPTION));
+        size_t size = 0;
+        
+
+        reinterpret_cast<CRYPTION*>(&raw_buffer[size])->dnphdr.seqnum = (WORD)m_dwOutSequence;
+        reinterpret_cast<CRYPTION*>(&raw_buffer[size])->dnphdr.paclen = (UINT16)data_size;
+        m_dwOutSequence++;
+
+        UINT32 u32 = 111;// = GetTickCount();
+        UINT64 u64 = 333; //; QueryPerformanceCounter((LARGE_INTEGER*)&u64);
+        reinterpret_cast<CRYPTION*>(&raw_buffer[size])->signature = ((u64 << 32) | u32);
+        Encryptor encryptor = Encryptor(&cryption);
+        if (encryptor)
+        {
+            reinterpret_cast<CRYPTION*>(&raw_buffer[size])->crc32 =
+                encryptor.crc32((char*)&raw_buffer[size] + sizeof(((CRYPTION*)0)->crc32),
+                sizeof(CRYPTION) - sizeof(((CRYPTION*)0)->crc32));
+
+            encryptor.encrypt(&raw_buffer[size], sizeof(CRYPTION));
+        }
+
+        size += sizeof(CRYPTION);
+
+        memcpy(&raw_buffer[size], data, data_size);
+
+        destbuff = (char*)raw_buffer;
+        destsize = data_size + size;
+    }
     return TRUE;
 }

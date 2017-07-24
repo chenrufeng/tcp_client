@@ -25,6 +25,7 @@ size_t TcpParser::GetHeaderSize(){
 }
 
 char* TcpParser::GenerateHeaderByBody(const char* pBody, size_t size){
+
     return 0;
 }
 
@@ -39,6 +40,11 @@ char* TcpParser::GetHeader(){
 
 size_t TcpParser::GetBodySize(){
     return  0; // 0 represent body size.
+}
+
+void TcpParser::SetBodySize(int n)
+{
+
 }
 
 size_t TcpParser::GetPackSize(){

@@ -9,6 +9,7 @@ public:
     virtual void SetHeader(const char* p);
     virtual size_t GetHeaderSize();
     virtual size_t GetBodySize();
+    virtual void SetBodySize(int n);
     //if the stream has not headers or separators. it return 0.
     virtual size_t GetPackSize();
 

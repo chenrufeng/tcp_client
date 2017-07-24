@@ -51,15 +51,16 @@ public:
     Node* PopHeadNode();
     void  PushFreeNode(Node* node);
 
-    // USED BY SENDER FROM APPLICATION.
+    
     // Producers are responsible for allocation of pAppending.
-    void Append_Imp(const char* pbuf, size_t size);
+    
+    void AppendPack(const char* pbuf, size_t size, const char* pbuf2, size_t size2);
 
 
     void CleanUp();
     ShareLink();
     ~ShareLink();
 private:
-
+    void Append_Imp(const char* pbuf, size_t size);
     CRITICAL_SECTION m_cs;
 };

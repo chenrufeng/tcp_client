@@ -78,7 +78,7 @@ void TcpClient::Close(){
         closesocket(this->m_sock);
         this->m_sock = INVALID_SOCKET;
     }
-    
+
 }
 bool TcpClient::IsConnected()
 {
@@ -88,11 +88,8 @@ size_t TcpClient::GetMsg(char* pBuf, size_t buff_size)
 {
     if (m_recvbufHead.Peek(GetmsgParser->GetHeader(), GetmsgParser->GetHeaderSize()))
     {
-        if (m_recvbufHead.Peek(pBuf, GetmsgParser->GetPackSize()))
-        {
-            m_recvbufHead.Read(GetmsgParser->GetPackSize());
-            return GetmsgParser->GetPackSize();
-        }
+        m_recvbufHead.Read(pBuf, GetmsgParser->GetPackSize());
+        return GetmsgParser->GetPackSize();
     }
     return 0;
 }
@@ -101,9 +98,8 @@ void TcpClient::Send(void* pbuff, size_t size)
     if (size < 1) return;
     assert(size <= m_max_pack_size);
     ::EnterCriticalSection(&SendCS);
-    SendmsgParser->GenerateHeaderByBody((char*)pbuff, size);    
-    this->m_sendbufHead.Append_Imp(SendmsgParser->GetHeader(), SendmsgParser->GetHeaderSize());    
-    this->m_sendbufHead.Append_Imp((char*)pbuff, size);    
+    SendmsgParser->GenerateHeaderByBody((char*)pbuff, size);
+    this->m_sendbufHead.AppendPack(SendmsgParser->GetHeader(), SendmsgParser->GetHeaderSize(), (char*)pbuff, size);
     ::LeaveCriticalSection(&SendCS);
 }
 void TcpClient::Stop()
@@ -147,16 +143,10 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
         if (nSendingRemain <= 0 && mine->m_sendbufHead.Peek(writeParser->GetHeader(), writeParser->GetHeaderSize()))
         {
             // should be ok
-            if (mine->m_sendbufHead.Peek(sending_buf->GetData(), writeParser->GetPackSize()))
-            {
-                writeParser->Encode(sending_buf->GetData() + writeParser->GetHeaderSize(), pSendingPointer, nSendingRemain);
-            }
-            else
-            {
-                break;
-            }
+            mine->m_sendbufHead.Read(sending_buf->GetData(), writeParser->GetPackSize());
+            writeParser->Encode(sending_buf->GetData() + writeParser->GetHeaderSize(), pSendingPointer, nSendingRemain);
         }
-        
+
         if (nSendingRemain > 0)
         {
             total = select(0, &readSet, &writeSet, nullptr, &timeout);
@@ -183,17 +173,17 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
                     req_recv_size = readParser->GetBodySize();
                 }
                 else if (recving_buf->GetUsed() > req_recv_size)
-                {                    
+                {
                     req_recv_size = readParser->GetPackSize() - recving_buf->GetUsed();
                 }
-                
+
                 if (req_recv_size > Node::MaxSize - recving_buf->GetUsed())
                 {
                     //printf("recieved a bad header: %d\n", req_recv_size);
                     break;
                 }
                 size_t recvn = 0;
-                recvn = recv(mine->m_sock, recving_buf->GetData(), req_recv_size, 0);
+                recvn = recv(mine->m_sock, recving_buf->GetData() + recving_buf->GetUsed(), req_recv_size, 0);
                 //if the connection has been gracefully closed, the return value is zero.
                 if (recvn == 0) {
                     //printf("recv failed: %d\n", WSAGetLastError());
@@ -204,8 +194,9 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
                     break;
                 }
                 // 1.recv head and body of data
-                recving_buf->Write(recvn);             
-                if (recving_buf->GetUsed() > readParser->GetHeaderSize())
+                recving_buf->Write(recvn);
+                
+                if (recving_buf->GetUsed() >= readParser->GetHeaderSize())
                 {
                     readParser->SetHeader(recving_buf->GetData());
                     // 2.check whether have a full pack.
@@ -216,8 +207,9 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
                         size_t decodeSize = 0;
                         readParser->Decode(recving_buf->GetData(), pDecodedBuf, decodeSize);
                         // 4.put pack into recieving queue.
-                        mine->m_recvbufHead.Append_Imp(pDecodedBuf, decodeSize);
-                        mine->DataArrial(decodeSize);
+                        readParser->SetBodySize(decodeSize);
+                        mine->m_recvbufHead.AppendPack(readParser->GetHeader(), readParser->GetHeaderSize(), pDecodedBuf, decodeSize);
+                        mine->DataArrialEvent(readParser->GetHeaderSize() + decodeSize);
                         // 5.reset
                         recving_buf->Reset();
                         readParser->Reset();
@@ -233,9 +225,9 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
                 //2.Data can be sent.
                 if (nSendingRemain > 0)
                 {
-                    size_t bytes_sent = send(mine->m_sock, 
-                                            (const char*)pSendingPointer + (writeParser->GetPackSize() - nSendingRemain), 
-                                            nSendingRemain, 0);
+                    size_t bytes_sent = send(mine->m_sock,
+                        (const char*)pSendingPointer,
+                        nSendingRemain, 0);
                     if (bytes_sent == SOCKET_ERROR) {
                         size_t ret_err = WSAGetLastError();
                         if (WSAEWOULDBLOCK != ret_err)
@@ -244,6 +236,7 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
                             break;
                         }
                     }
+                    pSendingPointer += bytes_sent;
                     nSendingRemain -= bytes_sent;
                     if (nSendingRemain <= 0)
                     {
@@ -253,7 +246,7 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
             }
 #pragma endregion
         }
-    }    
+    }
     if (recving_buf)
     {
         delete recving_buf;
@@ -272,7 +265,7 @@ DWORD WINAPI TcpClient::ThreadFunc(LPVOID lpParameter){
 }
 
 
-void TcpClient::DataArrial(int size)
+void TcpClient::DataArrialEvent(int size)
 {
 
 }
